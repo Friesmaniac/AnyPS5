@@ -6,11 +6,18 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#ifdef _WIN32
+#include <type_traits>
+#include "prx/libkernel/System/include/ExceptionDelivery.hpp"
+#endif
 
 namespace TimedWait {
 
 bool Coarse();
 void BindThreadWaitState(std::atomic<int>* state);
+#ifdef _WIN32
+extern "C" void DrainExceptionApcs_nid_no_patch();
+#endif
 std::uint64_t NowNanos();
 std::uint64_t DeadlineNanos(std::uint64_t microseconds);
 std::uint64_t RemainingMicros(std::uint64_t deadlineNanos);
@@ -62,6 +69,13 @@ public:
             return;
         }
 #endif
+#ifdef _WIN32
+        if constexpr (std::is_same_v<TLock, std::unique_lock<ExceptionDelivery::Mutex>>) {
+            ExceptionDelivery::Scope region;
+            coarse.wait(lock);
+            return;
+        }
+#endif
         coarse.wait(lock);
     }
 
@@ -74,6 +88,12 @@ public:
             const bool signaled = waitSignalUntil(waiter, deadlineNanos);
             lock.lock();
             return signaled;
+        }
+#endif
+#ifdef _WIN32
+        if constexpr (std::is_same_v<TLock, std::unique_lock<ExceptionDelivery::Mutex>>) {
+            ExceptionDelivery::Scope region;
+            return coarse.wait_for(lock, std::chrono::microseconds(RemainingMicros(deadlineNanos))) == std::cv_status::no_timeout;
         }
 #endif
         return coarse.wait_for(lock, std::chrono::microseconds(RemainingMicros(deadlineNanos))) == std::cv_status::no_timeout;
