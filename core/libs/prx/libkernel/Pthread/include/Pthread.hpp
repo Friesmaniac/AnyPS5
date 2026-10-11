@@ -105,6 +105,8 @@ struct PthreadPrivate {
     std::int64_t tid = nextThreadId.fetch_add(1, std::memory_order_relaxed);
 #ifdef _WIN32
     void* nativeHandle = nullptr;
+    std::atomic<int> exceptionRegionDepth{0};
+    std::atomic<bool> exceptionRegionPending{false};
 #else
     pthread_t hostThread{};
 #endif
