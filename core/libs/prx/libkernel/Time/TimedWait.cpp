@@ -105,6 +105,10 @@ void SleepNanosCoarse(std::uint64_t nanos) {
 
 #ifdef _WIN32
 
+void DrainExceptionApcs_nid_no_patch() {
+    DrainApcs();
+}
+
 struct Waiter {
     HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     HANDLE timer = CreateHighResolutionTimer();
