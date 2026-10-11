@@ -10,6 +10,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/System/include/ExceptionDelivery.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
@@ -22,7 +23,7 @@ struct AddressWaiter {
     bool woken = false;
 };
 
-std::mutex g_waitersLock;
+ExceptionDelivery::Mutex g_waitersLock;
 std::unordered_map<std::uintptr_t, std::list<AddressWaiter*>> g_waiters;
 
 template <class TValue>
@@ -33,7 +34,7 @@ bool IsAlignedAddress(std::uintptr_t address) {
 template <class TValue>
 int WaitOnAddress(TValue* address, TValue expected, const KernelUseconds* timeout, const void* caller) {
     const auto key = reinterpret_cast<std::uintptr_t>(address);
-    std::unique_lock<std::mutex> lock(g_waitersLock);
+    std::unique_lock lock(g_waitersLock);
     if (std::atomic_ref<TValue>(*address).load() != expected) {
         return SYNC_ON_ADDRESS_OK;
     }
@@ -112,7 +113,7 @@ int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count) {
         APS5_INVALID_ARG_EX;
     }
 
-    std::lock_guard<std::mutex> lock(g_waitersLock);
+    std::lock_guard lock(g_waitersLock);
     const auto entry = g_waiters.find(key);
     if (entry == g_waiters.end()) {
         return SYNC_ON_ADDRESS_OK;
