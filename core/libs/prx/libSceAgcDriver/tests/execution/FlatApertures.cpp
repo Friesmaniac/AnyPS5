@@ -21,6 +21,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -478,14 +479,26 @@ std::vector<Row> Rows() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        std::size_t part = 0, parts = 1;
+        if (argc == 3 && std::string_view(argv[1]) == "--part") {
+            const std::string_view value(argv[2]);
+            const auto slash = value.find('/');
+            part = std::stoul(std::string(value.substr(0, slash)));
+            parts = slash == std::string_view::npos ? 0 : std::stoul(std::string(value.substr(slash + 1)));
+        } else if (argc != 1) {
+            parts = 0;
+        }
+        if (parts == 0 || part >= parts) throw std::invalid_argument("usage: [--part K/N] with K < N");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool wave64 = device->Target().subgroupSize >= 32u;
         GuestBlock guest;
         std::size_t checked = 0;
-        for (const Row& row : Rows()) {
+        const auto rows = Rows();
+        for (std::size_t index = part; index < rows.size(); index += parts) {
+            const Row& row = rows[index];
             if (row.waveSize == 64u && !wave64) continue;
             Run(*device, row, guest);
             ++checked;

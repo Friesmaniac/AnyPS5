@@ -1718,6 +1718,13 @@ bool RegisteredReadableCovers(std::uint64_t address, std::size_t bytes) {
     return containingRange(lease, address, address + bytes) != nullptr;
 }
 
+std::uint64_t RegisteredReadableEnd(std::uint64_t address) {
+    if (address == std::numeric_limits<std::uint64_t>::max()) return 0;
+    const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    const auto* range = containingRange(lease, address, address + 1);
+    return range != nullptr ? range->address + range->bytes : 0;
+}
+
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
     auto& state = Imports();

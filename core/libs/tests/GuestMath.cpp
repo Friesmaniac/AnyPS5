@@ -23,6 +23,8 @@ std::uint64_t APS5_VABI _Stoul_nid_postfix(const char*, char**, int);
 std::int64_t APS5_VABI atol_nid_postfix(const char*);
 long long APS5_VABI atoll_nid_postfix(const char*);
 int* APS5_VABI __error_nid_postfix();
+long double APS5_VABI acosl_nid_postfix(long double);
+long double APS5_VABI frexpl_nid_postfix(long double, int*);
 struct LibcFloatConstant { std::uint32_t bits[4]; };
 extern LibcFloatConstant _FInf_nid_postfix;
 extern LibcFloatConstant _FNan_nid_postfix;
@@ -58,6 +60,38 @@ std::lldiv_t APS5_VABI lldiv_nid_postfix(long long, long long);
 std::lldiv_t APS5_VABI ldiv_nid_postfix(std::int64_t, std::int64_t);
 }
 static void Require(bool value) { if (!value) std::abort(); }
+
+static bool ExtendedBits(long double value, std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)]{};
+    std::memcpy(bytes, &value, sizeof(value));
+    std::uint64_t actualMantissa = 0;
+    std::uint16_t actualSignExponent = 0;
+    std::memcpy(&actualMantissa, bytes, 8);
+    std::memcpy(&actualSignExponent, bytes + 8, 2);
+    return actualMantissa == mantissa && actualSignExponent == signExponent;
+}
+
+static void CheckLongDouble() {
+    Require(ExtendedBits(acosl_nid_postfix(-1.0L), 0xc90fdaa22168c235ull, 0x4000));
+    Require(ExtendedBits(acosl_nid_postfix(0.0L), 0xc90fdaa22168c235ull, 0x3fff));
+    Require(ExtendedBits(acosl_nid_postfix(1.0L), 0, 0));
+    Require(std::isnan(acosl_nid_postfix(1.5L)) && std::isnan(acosl_nid_postfix(-2.0L)));
+
+    int exponent = 77;
+    Require(frexpl_nid_postfix(8.0L, &exponent) == 0.5L && exponent == 4);
+    Require(frexpl_nid_postfix(-3.0L, &exponent) == -0.75L && exponent == 2);
+    Require(frexpl_nid_postfix(0.375L, &exponent) == 0.75L && exponent == -1);
+    long double smallest = 0;
+    const std::uint64_t one = 1;
+    std::memcpy(&smallest, &one, sizeof(one));
+    Require(ExtendedBits(frexpl_nid_postfix(smallest, &exponent), 0x8000000000000000ull, 0x3ffe) && exponent == -16444);
+    exponent = 77;
+    Require(ExtendedBits(frexpl_nid_postfix(-0.0L, &exponent), 0, 0x8000) && exponent == 0);
+    exponent = 77;
+    Require(frexpl_nid_postfix(INFINITY, &exponent) == INFINITY && exponent == 77);
+    Require(frexpl_nid_postfix(-INFINITY, &exponent) == -INFINITY && exponent == 77);
+    Require(std::isnan(frexpl_nid_postfix(NAN, &exponent)) && exponent == 77);
+}
 
 static void CheckIntegerConversions() {
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
@@ -255,6 +289,7 @@ int main() {
     Require(std::isnan(logbf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
     Require(exp2_nid_postfix(-3.) == 0.125);
     Require(ldexp_nid_postfix(0.75, 4) == 12.);
+    CheckLongDouble();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
     Require(nextafterf_nid_postfix(1.f, 2.f) == 0x1.000002p0f && nextafterf_nid_postfix(1.f, 0.f) == 0x1.fffffep-1f);

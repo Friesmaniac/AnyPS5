@@ -551,15 +551,22 @@ public:
     }
 
     void Submit(std::function<void()> task) {
-        if (threads == 0) {
-            task();
-            return;
-        }
         {
-            std::lock_guard lock(mutex);
-            tasks.push_back(std::move(task));
+            std::unique_lock lock(mutex);
+            if (threads != 0 && !closed) {
+                tasks.push_back(std::move(task));
+                lock.unlock();
+                ready.notify_one();
+                return;
+            }
         }
-        ready.notify_one();
+        task();
+    }
+
+    void Close() {
+        std::unique_lock lock(mutex);
+        closed = true;
+        idle.wait(lock, [&] { return tasks.empty() && running == 0; });
     }
 
 private:
@@ -587,16 +594,26 @@ private:
                 pool.ready.wait(lock, [&] { return !pool.tasks.empty(); });
                 task = std::move(pool.tasks.front());
                 pool.tasks.pop_front();
+                ++pool.running;
             }
             task();
+            task = nullptr;
+            {
+                std::lock_guard lock(pool.mutex);
+                --pool.running;
+                if (pool.tasks.empty() && pool.running == 0) pool.idle.notify_all();
+            }
         }
         return nullptr;
     }
 
     std::mutex mutex;
     std::condition_variable ready;
+    std::condition_variable idle;
     std::deque<std::function<void()>> tasks;
     unsigned threads = 0;
+    unsigned running = 0;
+    bool closed = false;
 };
 
 bool AsyncRegistrationPrepare() {
@@ -605,7 +622,7 @@ bool AsyncRegistrationPrepare() {
 }
 
 void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapshot, std::shared_ptr<RegisteredPreparation> plan) {
-    RegistrationPreparePool::Instance().Submit([snapshot = std::move(snapshot), plan = std::move(plan)] {
+    SubmitRegistrationPreparation([snapshot = std::move(snapshot), plan = std::move(plan)] {
         PerformanceContext timingContext(FrameTiming::Preparation());
         std::vector<PreparedShaders::Entry> entries;
         std::exception_ptr failure;
@@ -629,6 +646,14 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
     });
 }
 
+}
+
+void SubmitRegistrationPreparation(std::function<void()> task) {
+    RegistrationPreparePool::Instance().Submit(std::move(task));
+}
+
+void CloseRegistrationPreparation() {
+    RegistrationPreparePool::Instance().Close();
 }
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target) {
