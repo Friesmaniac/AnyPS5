@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/System/include/ExceptionDelivery.hpp"
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -219,6 +220,14 @@ bool InWinpthread(DWORD64 rip) {
 
 bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
     if (thread == scePthreadSelf()) {
+        if (thread->exceptionRegionDepth.load(std::memory_order_seq_cst) > 0) {
+            auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}, {}, 0});
+            if (!QueueUserAPC(WaitingEntry, static_cast<HANDLE>(thread->nativeHandle), reinterpret_cast<ULONG_PTR>(queued.get())))
+                throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the protected thread");
+            thread->exceptionRegionPending.store(true, std::memory_order_seq_cst);
+            queued.release();
+            return true;
+        }
         CONTEXT context{};
         RtlCaptureContext(&context);
         Deliver(handler, signum, context);
@@ -242,8 +251,10 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
             ResumeThread(native);
             throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
         }
-        if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
+        const bool protectedRegion = thread->exceptionRegionDepth.load(std::memory_order_seq_cst) > 0;
+        if (protectedRegion || thread->waitCount.load(std::memory_order_seq_cst) > 0) {
             const bool accepted = QueueUserAPC(WaitingEntry, native, reinterpret_cast<ULONG_PTR>(queued.get())) != 0;
+            if (accepted && protectedRegion) thread->exceptionRegionPending.store(true, std::memory_order_seq_cst);
             ResumeThread(native);
             if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
             queued.release();
@@ -275,6 +286,16 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
 }
 
 #ifdef _WIN32
+void ExceptionDelivery::EnterExceptionRegion_nid_no_patch() {
+    scePthreadSelf()->exceptionRegionDepth.fetch_add(1, std::memory_order_seq_cst);
+}
+
+void ExceptionDelivery::LeaveExceptionRegion_nid_no_patch() {
+    auto* thread = scePthreadSelf();
+    if (thread->exceptionRegionDepth.fetch_sub(1, std::memory_order_seq_cst) == 1 && thread->exceptionRegionPending.exchange(false, std::memory_order_seq_cst))
+        TimedWait::DrainExceptionApcs_nid_no_patch();
+}
+
 extern "C" [[noreturn]] void Aps5RedirectedEntry(void* delivery) {
     RedirectedEntry(static_cast<Delivery*>(delivery));
 }
